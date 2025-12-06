@@ -23,6 +23,7 @@ class ExtensionDelegate: NSObject, WKExtensionDelegate {
                 }
             } else {
                 print("Permission denied: \(error?.localizedDescription ?? "")")
+                CloudKitManager.shared.pushRegistrationFailed("Bildirim izni verilmedi. Ayarlar > Bildirimler'den açın.")
             }
         }
     }
@@ -33,6 +34,7 @@ class ExtensionDelegate: NSObject, WKExtensionDelegate {
     
     func didFailToRegisterForRemoteNotificationsWithError(_ error: Error) {
         print("Failed to register: \(error.localizedDescription)")
+        CloudKitManager.shared.pushRegistrationFailed("Push kaydı yapılamadı: \(error.localizedDescription)")
     }
     
     func didReceiveRemoteNotification(_ userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (WKBackgroundFetchResult) -> Void) {

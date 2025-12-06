@@ -34,17 +34,33 @@ struct PairingView: View {
                     .padding(.top, 10)
                     
                     if let errorMessage = cloudManager.errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 11, weight: .regular, design: .rounded))
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        Button(action: {
-                            cloudManager.checkAccountStatus()
-                        }) {
-                            Text("Tekrar Dene")
-                                .font(.caption)
+                        VStack(spacing: 6) {
+                            Text(errorMessage)
+                                .font(.system(size: 11, weight: .regular, design: .rounded))
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.red.opacity(0.12))
+                                )
+                            
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    cloudManager.checkAccountStatus()
+                                }) {
+                                    Text("Tekrar Dene")
+                                        .font(.caption)
+                                }
+                                
+                                Button(action: {
+                                    cloudManager.retryIdentityFetch()
+                                }) {
+                                    Text("Kimliği Yenile")
+                                        .font(.caption)
+                                }
+                            }
                         }
                     }
                     
@@ -91,6 +107,13 @@ struct PairingView: View {
                                 isEnteringCode = true
                             }
                             .disabled(isLoading)
+                            
+                            if cloudManager.errorMessage != nil {
+                                ModernButton(title: "Yeniden Dene", icon: "arrow.clockwise", color: .orange) {
+                                    cloudManager.checkAccountStatus()
+                                }
+                                .disabled(isLoading)
+                            }
                         }
                     }
                     

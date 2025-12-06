@@ -1,6 +1,7 @@
 import SwiftUI
 import WatchKit
 import Combine
+import CloudKit
 
 // MARK: - Modern Ripple Effect View (Dalga Efekti)
 struct PulseWave: Identifiable {
@@ -388,6 +389,33 @@ struct HeartView: View {
                     }
                 }
                 .frame(height: 40)
+                
+                if let error = cloudManager.errorMessage {
+                    Text(error)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.red.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 4)
+                    
+                    if !cloudManager.pendingHeartbeats.isEmpty {
+                        Text("\(cloudManager.pendingHeartbeats.count) bekleyen kalp var.")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundColor(.yellow)
+                    }
+                    
+                    HStack(spacing: 8) {
+                        if cloudManager.permissionStatus == .restricted || cloudManager.permissionStatus == .couldNotDetermine {
+                            Text("iCloud kısıtlı, ayarları kontrol et.")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(.orange)
+                        }
+                        Button("Aboneliği Yenile") {
+                            cloudManager.refreshSubscriptions()
+                        }
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                    }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HeartbeatReceived"))) { _ in

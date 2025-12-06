@@ -6,6 +6,9 @@ class CloudKitManager: ObservableObject {
     
     private let container = CKContainer(identifier: "iCloud.com.adilemre.selfprod")
     private lazy var database = container.publicCloudDatabase
+    private let pairingTTL: TimeInterval = 10 * 60 // 10 minutes
+    private let heartbeatQueueKey = "PendingHeartbeats"
+    private var lastPairingRecordID: CKRecord.ID?
     
     @Published var currentUserID: String?
     @Published var partnerID: String? {
@@ -18,12 +21,33 @@ class CloudKitManager: ObservableObject {
     @Published var isPaired: Bool = false
     @Published var errorMessage: String?
     @Published var permissionStatus: CKAccountStatus = .couldNotDetermine
+    @Published var pendingHeartbeats: [HeartbeatDraft] = [] {
+        didSet { persistPendingHeartbeats() }
+    }
     
     private init() {
         self.partnerID = UserDefaults.standard.string(forKey: "partnerID")
         self.isPaired = self.partnerID != nil
+        self.pendingHeartbeats = Self.loadPendingHeartbeats(from: heartbeatQueueKey)
         
         checkAccountStatus()
+    }
+    
+    private static func loadPendingHeartbeats(from key: String) -> [HeartbeatDraft] {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([HeartbeatDraft].self, from: data)) ?? []
+    }
+    
+    private func persistPendingHeartbeats() {
+        if let data = try? JSONEncoder().encode(pendingHeartbeats) {
+            UserDefaults.standard.set(data, forKey: heartbeatQueueKey)
+        }
+    }
+    
+    struct HeartbeatDraft: Codable, Identifiable {
+        let id: UUID
+        let toID: String
+        let timestamp: Date
     }
     
     func checkAccountStatus() {
@@ -32,6 +56,7 @@ class CloudKitManager: ObservableObject {
                 self?.permissionStatus = status
                 switch status {
                 case .available:
+                    self?.errorMessage = nil
                     self?.getCurrentUserID()
                 case .noAccount:
                     self?.errorMessage = "Lütfen iCloud hesabınıza giriş yapın."
@@ -59,6 +84,7 @@ class CloudKitManager: ObservableObject {
                     
                     if self?.isPaired == true {
                         self?.subscribeToHeartbeats()
+                        self?.flushPendingHeartbeats()
                     }
                 }
             } else if let error = error {
@@ -77,6 +103,9 @@ class CloudKitManager: ObservableObject {
         
         // Prevent concurrent requests
         guard permissionStatus == .available || permissionStatus == .couldNotDetermine else {
+            DispatchQueue.main.async {
+                self.errorMessage = "iCloud kullanılamıyor, lütfen tekrar deneyin."
+            }
             completion(nil)
             return
         }
@@ -90,14 +119,18 @@ class CloudKitManager: ObservableObject {
             let record = CKRecord(recordType: "PairingSession")
             record["code"] = code
             record["initiatorID"] = myID
+            record["expiresAt"] = Date().addingTimeInterval(self.pairingTTL)
+            record["used"] = false
             
             self.database.save(record) { savedRecord, error in
                 if error == nil {
                     print("Pairing code generated: \(code)")
                     DispatchQueue.main.async {
                         if let rID = savedRecord?.recordID {
+                            self.lastPairingRecordID = rID
                             self.subscribeToPairingUpdate(recordID: rID)
                         }
+                        self.errorMessage = nil
                     }
                     completion(code)
                 } else {
@@ -150,16 +183,40 @@ class CloudKitManager: ObservableObject {
         database.fetch(withQuery: query, inZoneWith: nil, desiredKeys: nil, resultsLimit: 1) { [weak self] result in
             switch result {
             case .success(let (results, _)):
-                guard let self = self, 
-                      let match = results.first, 
+                guard let match = results.first else {
+                    DispatchQueue.main.async {
+                        self?.errorMessage = "Kod bulunamadı veya süresi doldu."
+                    }
+                    completion(false)
+                    return
+                }
+                
+                guard let self = self,
                       let record = try? match.1.get(),
                       let myID = self.currentUserID else {
                     completion(false)
                     return
                 }
                 
+                if let expiresAt = record["expiresAt"] as? Date, expiresAt < Date() {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Kodun süresi dolmuş. Yeniden oluştur."
+                    }
+                    completion(false)
+                    return
+                }
+                
+                if (record["used"] as? Bool) == true || record["receiverID"] != nil {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Bu kod zaten kullanılmış."
+                    }
+                    completion(false)
+                    return
+                }
+                
                 // Found session, update with my ID
                 record["receiverID"] = myID
+                record["used"] = true
                 
                 let modifyOp = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
                 modifyOp.savePolicy = .changedKeys
@@ -172,6 +229,7 @@ class CloudKitManager: ObservableObject {
                                 self.partnerID = initiatorID
                                 self.isPaired = true
                                 self.subscribeToHeartbeats()
+                                self.flushPendingHeartbeats()
                                 completion(true)
                             }
                         } else {
@@ -179,6 +237,9 @@ class CloudKitManager: ObservableObject {
                         }
                     case .failure(let error):
                         print("Modified failed: \(error.localizedDescription)")
+                        DispatchQueue.main.async {
+                            self.errorMessage = "Bağlanılamadı: \(error.localizedDescription)"
+                        }
                         completion(false)
                     }
                 }
@@ -186,6 +247,9 @@ class CloudKitManager: ObservableObject {
                 
             case .failure(let error):
                 print("Fetch failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self?.errorMessage = "Kod okunamadı: \(error.localizedDescription)"
+                }
                 completion(false)
             }
         }
@@ -203,6 +267,9 @@ class CloudKitManager: ObservableObject {
         database.save(subscription) { _, error in
             if let error = error {
                 print("Subscription failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.errorMessage = "Eşleşme bildirimi abonesi kurulamadı. Tekrar deneyin."
+                }
             } else {
                 print("Listening for pairing completion...")
             }
@@ -213,9 +280,21 @@ class CloudKitManager: ObservableObject {
         database.fetch(withRecordID: recordID) { [weak self] record, error in
             if let record = record, let receiverID = record["receiverID"] as? String {
                 DispatchQueue.main.async {
+                    self?.lastPairingRecordID = recordID
+                }
+                
+                if let expiresAt = record["expiresAt"] as? Date, expiresAt < Date() {
+                    DispatchQueue.main.async {
+                        self?.errorMessage = "Eşleşme süresi doldu, yeni kod oluştur."
+                    }
+                    return
+                }
+                
+                DispatchQueue.main.async {
                     self?.partnerID = receiverID
                     self?.isPaired = true
                     self?.subscribeToHeartbeats()
+                    self?.flushPendingHeartbeats()
                 }
             }
         }
@@ -224,18 +303,48 @@ class CloudKitManager: ObservableObject {
     // MARK: - Heartbeat
     
     func sendHeartbeat() {
-        guard let myID = currentUserID, let pID = partnerID else { return }
+        guard let myID = currentUserID, let pID = partnerID else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Eşleşme yok. Önce bağlanın."
+            }
+            return
+        }
+        
+        let timestamp = Date()
+        
+        guard permissionStatus == .available else {
+            queueHeartbeat(toID: pID, timestamp: timestamp)
+            DispatchQueue.main.async {
+                self.errorMessage = "iCloud çevrimdışı. Kalp sıraya alındı."
+            }
+            return
+        }
         
         let record = CKRecord(recordType: "Heartbeat")
         record["fromID"] = myID
         record["toID"] = pID
-        record["timestamp"] = Date()
+        record["timestamp"] = timestamp
         
-        database.save(record) { _, error in
+        database.save(record) { [weak self] _, error in
+            guard let self = self else { return }
             if let error = error {
                 print("Failed to send heartbeat: \(error.localizedDescription)")
+                if self.isNetworkRelated(error) {
+                    self.queueHeartbeat(toID: pID, timestamp: timestamp)
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Bağlantı yokken kalp sıraya alındı."
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Gönderilemedi: \(error.localizedDescription)"
+                    }
+                }
             } else {
                 print("Heartbeat sent!")
+                self.flushPendingHeartbeats()
+                DispatchQueue.main.async {
+                    self.errorMessage = nil
+                }
             }
         }
     }
@@ -259,9 +368,90 @@ class CloudKitManager: ObservableObject {
             if let error = error {
                 // Subscription might already exist, which is fine
                 print("Heartbeat subscription result: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.errorMessage = "Kalp bildirimi abonesi kurulamadı. Yeniden deneyin."
+                }
             } else {
                 print("Subscribed to heartbeats.")
+                DispatchQueue.main.async {
+                    self.errorMessage = nil
+                }
             }
         }
+    }
+    
+    func refreshSubscriptions() {
+        subscribeToHeartbeats()
+        if let recordID = lastPairingRecordID {
+            subscribeToPairingUpdate(recordID: recordID)
+        }
+    }
+    
+    // MARK: - Offline queue helpers
+    
+    private func queueHeartbeat(toID: String, timestamp: Date) {
+        DispatchQueue.main.async {
+            let draft = HeartbeatDraft(id: UUID(), toID: toID, timestamp: timestamp)
+            self.pendingHeartbeats.append(draft)
+        }
+    }
+    
+    func flushPendingHeartbeats() {
+        guard permissionStatus == .available,
+              let myID = currentUserID,
+              let pID = partnerID,
+              !pendingHeartbeats.isEmpty else { return }
+        
+        let drafts = pendingHeartbeats
+        
+        for draft in drafts {
+            let record = CKRecord(recordType: "Heartbeat")
+            record["fromID"] = myID
+            record["toID"] = pID
+            record["timestamp"] = draft.timestamp
+            
+            database.save(record) { [weak self] _, error in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if let error = error {
+                        print("Failed to flush heartbeat: \(error.localizedDescription)")
+                        self.errorMessage = "Bekleyen kalp gönderilemedi: \(error.localizedDescription)"
+                    } else {
+                        self.pendingHeartbeats.removeAll { $0.id == draft.id }
+                        if self.pendingHeartbeats.isEmpty {
+                            self.errorMessage = nil
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func isNetworkRelated(_ error: Error) -> Bool {
+        guard let ckError = error as? CKError else { return false }
+        switch ckError.code {
+        case .networkUnavailable, .networkFailure, .serviceUnavailable, .requestRateLimited, .zoneBusy:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    // MARK: - Push registration feedback
+    
+    func pushRegistrationFailed(_ message: String) {
+        DispatchQueue.main.async {
+            self.errorMessage = message
+        }
+    }
+    
+    func retryIdentityFetch() {
+        guard permissionStatus == .available else {
+            DispatchQueue.main.async {
+                self.errorMessage = "iCloud kullanılamıyor. Ayarları kontrol edin."
+            }
+            return
+        }
+        getCurrentUserID()
     }
 }
