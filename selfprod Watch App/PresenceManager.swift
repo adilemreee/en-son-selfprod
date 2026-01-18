@@ -1,9 +1,10 @@
 import CoreLocation
 import CloudKit
 import Combine
+import WatchKit
 
-/// Manages proximity detection between paired partners
-/// Uses CoreLocation to track user location and CloudKit to sync with partner
+/// Robust Presence Manager - Enhanced for reliable location tracking
+/// Features: Retry logic, location validation, periodic refresh, error recovery
 class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = PresenceManager()
     
@@ -13,21 +14,41 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         static let proximityThreshold: CLLocationDistance = 100.0
         
         /// Minimum time between location updates to CloudKit (seconds)
-        static let locationUpdateInterval: TimeInterval = 5 * 60 // 5 minutes
+        static let locationUpdateInterval: TimeInterval = 3 * 60 // 3 minutes (reduced for faster updates)
+        
+        /// Partner location refresh interval (seconds)
+        static let partnerRefreshInterval: TimeInterval = 60 // 1 minute
         
         /// Minimum distance change to trigger update (meters)
-        static let distanceFilter: CLLocationDistance = 50.0
+        static let distanceFilter: CLLocationDistance = 30.0 // More sensitive
         
         /// Cooldown between encounter notifications (seconds)
         static let encounterCooldown: TimeInterval = 30 * 60 // 30 minutes
         
         /// Location record TTL (seconds)
-        static let locationTTL: TimeInterval = 15 * 60 // 15 minutes
+        static let locationTTL: TimeInterval = 10 * 60 // 10 minutes
+        
+        /// Distance threshold for high accuracy mode (meters)
+        static let highAccuracyThreshold: CLLocationDistance = 1000.0
+        
+        /// Maximum location age to consider valid (seconds)
+        static let maxLocationAge: TimeInterval = 120 // 2 minutes
+        
+        /// Minimum horizontal accuracy for valid location (meters)
+        static let minAccuracy: CLLocationAccuracy = 200.0
+        
+        /// Retry count for CloudKit operations
+        static let maxRetryCount = 3
+        
+        /// Base retry delay (seconds)
+        static let retryDelay: TimeInterval = 2.0
     }
     
     private enum StorageKeys {
         static let presenceEnabled = "PresenceTrackingEnabled"
         static let lastEncounterTime = "LastEncounterTime"
+        static let lastKnownLat = "LastKnownLatitude"
+        static let lastKnownLon = "LastKnownLongitude"
     }
     
     // MARK: - Properties
@@ -38,6 +59,8 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var lastLocationUpdate: Date?
     private var lastEncounterTime: Date?
     private var locationSubscribed = false
+    private var partnerRefreshTimer: Timer?
+    private var retryCount = 0
     
     // MARK: - Published Properties
     @Published var isEnabled: Bool = false {
@@ -59,13 +82,25 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var distanceToPartner: CLLocationDistance?
     @Published var lastEncounter: Date?
     @Published var errorMessage: String?
+    @Published var locationStatus: LocationStatus = .unknown
+    @Published var lastSyncTime: Date?
+    
+    // MARK: - Location Status Enum
+    enum LocationStatus: String {
+        case unknown = "Bilinmiyor"
+        case acquiring = "Konum alınıyor..."
+        case active = "Aktif"
+        case stale = "Eski konum"
+        case error = "Hata"
+        case noPermission = "İzin yok"
+    }
     
     // MARK: - Initialization
     private override init() {
         super.init()
         
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = Config.distanceFilter
         
         // Load saved state
@@ -73,45 +108,98 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastEncounterTime = UserDefaults.standard.object(forKey: StorageKeys.lastEncounterTime) as? Date
         lastEncounter = lastEncounterTime
         
+        // Load last known location
+        loadLastKnownLocation()
+        
         // Check current authorization
         authorizationStatus = locationManager.authorizationStatus
+        updateLocationStatus()
+        
+        #if DEBUG
+        print("🗺️ PresenceManager initialized, enabled: \(isEnabled)")
+        #endif
     }
     
     // MARK: - Authorization
     func requestAuthorization() {
+        #if DEBUG
+        print("📍 Requesting location authorization...")
+        #endif
         locationManager.requestWhenInUseAuthorization()
     }
     
     // MARK: - Tracking Control
     func startTracking() {
+        #if DEBUG
+        print("🟢 Starting presence tracking...")
+        #endif
+        
         guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
+            locationStatus = .noPermission
             requestAuthorization()
             return
         }
         
+        locationStatus = .acquiring
         locationManager.startUpdatingLocation()
         subscribeToPartnerLocation()
+        startPartnerRefreshTimer()
+        
+        // Immediately fetch partner location
+        fetchPartnerLocation()
         
         #if DEBUG
-        print("Presence tracking started")
+        print("✅ Presence tracking started")
         #endif
     }
     
     func stopTracking() {
         locationManager.stopUpdatingLocation()
+        stopPartnerRefreshTimer()
+        locationStatus = .unknown
         
         #if DEBUG
-        print("Presence tracking stopped")
+        print("🔴 Presence tracking stopped")
         #endif
+    }
+    
+    // MARK: - Periodic Partner Refresh
+    private func startPartnerRefreshTimer() {
+        stopPartnerRefreshTimer()
+        partnerRefreshTimer = Timer.scheduledTimer(withTimeInterval: Config.partnerRefreshInterval, repeats: true) { [weak self] _ in
+            self?.fetchPartnerLocation()
+        }
+    }
+    
+    private func stopPartnerRefreshTimer() {
+        partnerRefreshTimer?.invalidate()
+        partnerRefreshTimer = nil
     }
     
     // MARK: - CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         
+        // Validate location quality
+        guard isValidLocation(location) else {
+            #if DEBUG
+            print("⚠️ Invalid location received: accuracy=\(location.horizontalAccuracy)m, age=\(abs(location.timestamp.timeIntervalSinceNow))s")
+            #endif
+            return
+        }
+        
+        #if DEBUG
+        print("📍 Valid location: \(location.coordinate.latitude), \(location.coordinate.longitude) (accuracy: \(location.horizontalAccuracy)m)")
+        #endif
+        
         DispatchQueue.main.async {
             self.currentLocation = location
+            self.locationStatus = .active
+            self.errorMessage = nil
         }
+        
+        // Save last known location
+        saveLastKnownLocation(location)
         
         // Check if we should update CloudKit
         if shouldUpdateCloudKit() {
@@ -120,25 +208,122 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         // Check proximity to partner
         checkProximity()
+        
+        // Adaptive accuracy
+        updateLocationAccuracy()
+    }
+    
+    private func isValidLocation(_ location: CLLocation) -> Bool {
+        // Check accuracy
+        guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= Config.minAccuracy else {
+            return false
+        }
+        
+        // Check age
+        let age = abs(location.timestamp.timeIntervalSinceNow)
+        guard age <= Config.maxLocationAge else {
+            return false
+        }
+        
+        // Check valid coordinates
+        guard location.coordinate.latitude != 0 || location.coordinate.longitude != 0 else {
+            return false
+        }
+        
+        return true
+    }
+    
+    private func saveLastKnownLocation(_ location: CLLocation) {
+        UserDefaults.standard.set(location.coordinate.latitude, forKey: StorageKeys.lastKnownLat)
+        UserDefaults.standard.set(location.coordinate.longitude, forKey: StorageKeys.lastKnownLon)
+    }
+    
+    private func loadLastKnownLocation() {
+        let lat = UserDefaults.standard.double(forKey: StorageKeys.lastKnownLat)
+        let lon = UserDefaults.standard.double(forKey: StorageKeys.lastKnownLon)
+        
+        if lat != 0 || lon != 0 {
+            currentLocation = CLLocation(latitude: lat, longitude: lon)
+            #if DEBUG
+            print("📍 Loaded last known location: \(lat), \(lon)")
+            #endif
+        }
+    }
+    
+    // MARK: - Adaptive Accuracy
+    private func updateLocationAccuracy() {
+        if let distance = distanceToPartner {
+            if distance <= Config.highAccuracyThreshold {
+                if locationManager.desiredAccuracy != kCLLocationAccuracyBest {
+                    locationManager.desiredAccuracy = kCLLocationAccuracyBest
+                    locationManager.distanceFilter = 10.0
+                    #if DEBUG
+                    print("🎯 High accuracy mode - partner is \(Int(distance))m away")
+                    #endif
+                }
+            } else {
+                if locationManager.desiredAccuracy != kCLLocationAccuracyHundredMeters {
+                    locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+                    locationManager.distanceFilter = Config.distanceFilter
+                    #if DEBUG
+                    print("🔋 Battery saving mode - partner is \(Int(distance))m away")
+                    #endif
+                }
+            }
+        }
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         #if DEBUG
-        print("Location error: \(error.localizedDescription)")
+        print("❌ Location error: \(error.localizedDescription)")
         #endif
         
         DispatchQueue.main.async {
-            self.errorMessage = "Konum alınamadı: \(error.localizedDescription)"
+            self.locationStatus = .error
+            
+            if let clError = error as? CLError {
+                switch clError.code {
+                case .denied:
+                    self.errorMessage = "Konum izni verilmedi"
+                    self.locationStatus = .noPermission
+                case .locationUnknown:
+                    self.errorMessage = "Konum şu an belirlenemiyor"
+                default:
+                    self.errorMessage = "Konum hatası: \(clError.code.rawValue)"
+                }
+            } else {
+                self.errorMessage = error.localizedDescription
+            }
         }
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         DispatchQueue.main.async {
             self.authorizationStatus = manager.authorizationStatus
+            self.updateLocationStatus()
+            
+            #if DEBUG
+            print("🔐 Authorization changed: \(manager.authorizationStatus.rawValue)")
+            #endif
             
             if self.isEnabled && (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways) {
                 self.startTracking()
             }
+        }
+    }
+    
+    private func updateLocationStatus() {
+        switch authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            if currentLocation != nil {
+                locationStatus = .active
+            } else {
+                locationStatus = .acquiring
+            }
+        case .denied, .restricted:
+            locationStatus = .noPermission
+        default:
+            locationStatus = .unknown
         }
     }
     
@@ -148,12 +333,21 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         return Date().timeIntervalSince(lastUpdate) >= Config.locationUpdateInterval
     }
     
-    private func updateLocationInCloudKit(_ location: CLLocation) {
-        guard let myID = CloudKitManager.shared.currentUserID else { return }
+    private func updateLocationInCloudKit(_ location: CLLocation, retryAttempt: Int = 0) {
+        guard let myID = CloudKitManager.shared.currentUserID else {
+            #if DEBUG
+            print("⚠️ No user ID, skipping CloudKit update")
+            #endif
+            return
+        }
+        
+        #if DEBUG
+        print("☁️ Updating location in CloudKit (attempt \(retryAttempt + 1))...")
+        #endif
         
         lastLocationUpdate = Date()
         
-        // First, delete old location records
+        // Delete old records first
         deleteOldLocationRecords(for: myID) { [weak self] in
             guard let self = self else { return }
             
@@ -164,15 +358,27 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             record["longitude"] = location.coordinate.longitude
             record["timestamp"] = Date()
             record["expiresAt"] = Date().addingTimeInterval(Config.locationTTL)
+            record["accuracy"] = location.horizontalAccuracy
             
-            self.database.save(record) { savedRecord, error in
+            self.database.save(record) { [weak self] savedRecord, error in
                 if let error = error {
                     #if DEBUG
-                    print("Failed to save location: \(error.localizedDescription)")
+                    print("❌ Failed to save location: \(error.localizedDescription)")
                     #endif
+                    
+                    // Retry with exponential backoff
+                    if retryAttempt < Config.maxRetryCount {
+                        let delay = Config.retryDelay * pow(2.0, Double(retryAttempt))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            self?.updateLocationInCloudKit(location, retryAttempt: retryAttempt + 1)
+                        }
+                    }
                 } else {
+                    DispatchQueue.main.async {
+                        self?.lastSyncTime = Date()
+                    }
                     #if DEBUG
-                    print("Location updated in CloudKit")
+                    print("✅ Location saved to CloudKit")
                     #endif
                 }
             }
@@ -208,7 +414,12 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // MARK: - Partner Location Subscription
     private func subscribeToPartnerLocation() {
         guard !locationSubscribed else { return }
-        guard let partnerID = CloudKitManager.shared.partnerID else { return }
+        guard let partnerID = CloudKitManager.shared.partnerID else {
+            #if DEBUG
+            print("⚠️ No partner ID, skipping subscription")
+            #endif
+            return
+        }
         
         let subscriptionID = "PartnerLocation-Sub"
         let predicate = NSPredicate(format: "userID == %@", partnerID)
@@ -229,11 +440,14 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 let description = error.localizedDescription.lowercased()
                 if description.contains("already exists") || description.contains("duplicate") {
                     self?.locationSubscribed = true
+                    #if DEBUG
+                    print("📱 Partner subscription already exists")
+                    #endif
                 }
             } else {
                 self?.locationSubscribed = true
                 #if DEBUG
-                print("Subscribed to partner location updates")
+                print("✅ Subscribed to partner location updates")
                 #endif
             }
         }
@@ -242,6 +456,10 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // MARK: - Fetch Partner Location
     func fetchPartnerLocation() {
         guard let partnerID = CloudKitManager.shared.partnerID else { return }
+        
+        #if DEBUG
+        print("🔄 Fetching partner location...")
+        #endif
         
         let predicate = NSPredicate(format: "userID == %@", partnerID)
         let query = CKQuery(recordType: "UserLocation", predicate: predicate)
@@ -254,25 +472,29 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                       let record = try? match.1.get(),
                       let lat = record["latitude"] as? Double,
                       let lon = record["longitude"] as? Double else {
-                    // No location found - clear partner location
                     DispatchQueue.main.async {
                         self?.partnerLocation = nil
                         self?.partnerLocationTimestamp = nil
                         self?.distanceToPartner = nil
                         self?.isNearPartner = false
                     }
+                    #if DEBUG
+                    print("⚠️ No partner location found")
+                    #endif
                     return
                 }
                 
                 // Check if expired
                 if let expiresAt = record["expiresAt"] as? Date, expiresAt < Date() {
-                    // Location expired - clear it
                     DispatchQueue.main.async {
                         self?.partnerLocation = nil
                         self?.partnerLocationTimestamp = nil
                         self?.distanceToPartner = nil
                         self?.isNearPartner = false
                     }
+                    #if DEBUG
+                    print("⏰ Partner location expired")
+                    #endif
                     return
                 }
                 
@@ -283,14 +505,40 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     self?.partnerLocation = location
                     self?.partnerLocationTimestamp = timestamp
                     self?.checkProximity()
+                    
+                    // Post notification
+                    NotificationCenter.default.post(name: .partnerLocationUpdated, object: nil)
                 }
+                
+                #if DEBUG
+                print("✅ Partner location: \(lat), \(lon)")
+                #endif
                 
             case .failure(let error):
                 #if DEBUG
-                print("Failed to fetch partner location: \(error.localizedDescription)")
+                print("❌ Failed to fetch partner location: \(error.localizedDescription)")
                 #endif
             }
         }
+    }
+    
+    // MARK: - Force Refresh
+    func forceRefresh() {
+        #if DEBUG
+        print("🔄 Force refreshing locations...")
+        #endif
+        
+        // Update own location immediately
+        if let location = currentLocation {
+            lastLocationUpdate = nil // Force update
+            updateLocationInCloudKit(location)
+        }
+        
+        // Fetch partner location
+        fetchPartnerLocation()
+        
+        // Haptic feedback
+        WKInterfaceDevice.current().play(.click)
     }
     
     // MARK: - Proximity Detection
@@ -316,6 +564,10 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             if self.isNearPartner && !wasNear {
                 self.handleEncounter()
             }
+            
+            #if DEBUG
+            print("📏 Distance to partner: \(Int(distance))m, isNear: \(self.isNearPartner)")
+            #endif
         }
     }
     
@@ -325,7 +577,7 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         if let lastEncounter = lastEncounterTime,
            Date().timeIntervalSince(lastEncounter) < Config.encounterCooldown {
             #if DEBUG
-            print("Encounter cooldown active, skipping notification")
+            print("⏳ Encounter cooldown active, skipping")
             #endif
             return
         }
@@ -337,14 +589,17 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             self.lastEncounter = self.lastEncounterTime
         }
         
-        // Create encounter record in CloudKit
+        // Create encounter record
         createEncounterRecord()
         
-        // Post local notification
+        // Post notification
         NotificationCenter.default.post(name: .encounterDetected, object: nil)
         
+        // Haptic
+        WKInterfaceDevice.current().play(.notification)
+        
         #if DEBUG
-        print("Encounter detected! Distance: \(distanceToPartner ?? 0)m")
+        print("🎉 Encounter detected! Distance: \(distanceToPartner ?? 0)m")
         #endif
     }
     
@@ -360,15 +615,13 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         record["longitude"] = currentLocation?.coordinate.longitude ?? 0
         
         database.save(record) { _, error in
+            #if DEBUG
             if let error = error {
-                #if DEBUG
-                print("Failed to save encounter: \(error.localizedDescription)")
-                #endif
+                print("❌ Failed to save encounter: \(error.localizedDescription)")
             } else {
-                #if DEBUG
-                print("Encounter saved to CloudKit")
-                #endif
+                print("✅ Encounter saved")
             }
+            #endif
         }
     }
     
@@ -376,6 +629,9 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func clearLocationData() {
         guard let myID = CloudKitManager.shared.currentUserID else { return }
         deleteOldLocationRecords(for: myID) {}
+        
+        UserDefaults.standard.removeObject(forKey: StorageKeys.lastKnownLat)
+        UserDefaults.standard.removeObject(forKey: StorageKeys.lastKnownLon)
         
         DispatchQueue.main.async {
             self.currentLocation = nil

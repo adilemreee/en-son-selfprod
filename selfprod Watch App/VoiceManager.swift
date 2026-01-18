@@ -9,8 +9,8 @@ class VoiceManager: NSObject, ObservableObject {
     
     // MARK: - Configuration
     private enum Config {
-        static let maxDuration: TimeInterval = 5.0
-        static let sampleRate: Double = 22050
+        static let maxDuration: TimeInterval = 10.0  // Upgraded from 5s
+        static let sampleRate: Double = 44100        // Upgraded from 22050
         static let subscriptionID = "VoiceMessage-Sub"
     }
     
@@ -91,7 +91,7 @@ class VoiceManager: NSObject, ObservableObject {
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: Config.sampleRate,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue  // Upgraded from medium
         ]
         
         do {

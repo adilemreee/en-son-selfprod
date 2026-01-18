@@ -135,21 +135,83 @@ class ExtensionDelegate: NSObject, WKExtensionDelegate, UNUserNotificationCenter
     
     // MARK: - Notification actions
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        if response.actionIdentifier == "HEART_REPLY" {
+        switch response.actionIdentifier {
+        case "HEART_REPLY":
             CloudKitManager.shared.sendHeartbeat()
             WKInterfaceDevice.current().play(.success)
+            
+        case "KISS_EMOJI", "HUG_EMOJI", "LOVE_EMOJI":
+            // For now, all emoji actions send a heartbeat
+            // Future: Could send different reaction types
+            CloudKitManager.shared.sendHeartbeat()
+            WKInterfaceDevice.current().play(.success)
+            
+        case "PLAY_VOICE":
+            // Open app and play voice message
+            VoiceManager.shared.playIncomingMessage()
+            WKInterfaceDevice.current().play(.notification)
+            
+        default:
+            break
         }
     }
     
     private func setupNotificationCategories(center: UNUserNotificationCenter) {
-        // Heartbeat category
-        let reply = UNNotificationAction(identifier: "HEART_REPLY", title: "Hemen karşılık ver", options: [.authenticationRequired])
-        let heartbeatCategory = UNNotificationCategory(identifier: "Heartbeat", actions: [reply], intentIdentifiers: [], options: [])
+        // MARK: - Heartbeat category with emoji actions
+        let heartReply = UNNotificationAction(
+            identifier: "HEART_REPLY",
+            title: "💖 Kalp Gönder",
+            options: [.authenticationRequired]
+        )
+        let kissEmoji = UNNotificationAction(
+            identifier: "KISS_EMOJI",
+            title: "😘",
+            options: []
+        )
+        let hugEmoji = UNNotificationAction(
+            identifier: "HUG_EMOJI",
+            title: "🤗",
+            options: []
+        )
+        let loveEmoji = UNNotificationAction(
+            identifier: "LOVE_EMOJI",
+            title: "🥰",
+            options: []
+        )
+        let heartbeatCategory = UNNotificationCategory(
+            identifier: "Heartbeat",
+            actions: [heartReply, kissEmoji, hugEmoji, loveEmoji],
+            intentIdentifiers: [],
+            options: []
+        )
         
-        // Encounter category
-        let encounterCategory = UNNotificationCategory(identifier: "Encounter", actions: [], intentIdentifiers: [], options: [])
+        // MARK: - Voice message category
+        let playVoice = UNNotificationAction(
+            identifier: "PLAY_VOICE",
+            title: "▶️ Dinle",
+            options: [.foreground]
+        )
+        let voiceCategory = UNNotificationCategory(
+            identifier: "VoiceMessage",
+            actions: [playVoice, heartReply],
+            intentIdentifiers: [],
+            options: []
+        )
         
-        center.setNotificationCategories([heartbeatCategory, encounterCategory])
+        // MARK: - Encounter category
+        let sendHeart = UNNotificationAction(
+            identifier: "HEART_REPLY",
+            title: "💜 Kalp Gönder",
+            options: []
+        )
+        let encounterCategory = UNNotificationCategory(
+            identifier: "Encounter",
+            actions: [sendHeart],
+            intentIdentifiers: [],
+            options: []
+        )
+        
+        center.setNotificationCategories([heartbeatCategory, voiceCategory, encounterCategory])
     }
     
     // MARK: - Complication quick action

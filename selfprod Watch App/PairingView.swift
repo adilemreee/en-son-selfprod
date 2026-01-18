@@ -7,6 +7,7 @@ struct PairingView: View {
     @State private var enteredCode: String = ""
     @State private var isEnteringCode = false
     @State private var isLoading = false
+    @State private var pairingTimer: Timer?
     
     // Modern Gradient Background
     let bgGradient = RadialGradient(
@@ -15,8 +16,6 @@ struct PairingView: View {
         startRadius: 10,
         endRadius: 180
     )
-    
-    let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     
     var body: some View {
         ZStack {
@@ -199,11 +198,26 @@ struct PairingView: View {
                 .padding()
             }
         }
-        .onReceive(timer) { _ in
+        .onAppear {
+            startPairingTimer()
+        }
+        .onDisappear {
+            stopPairingTimer()
+        }
+    }
+    
+    // MARK: - Timer Management (Memory Leak Fix)
+    private func startPairingTimer() {
+        pairingTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             if generatedCode != nil && !cloudManager.isPaired {
                 cloudManager.refreshPairingStatus()
             }
         }
+    }
+    
+    private func stopPairingTimer() {
+        pairingTimer?.invalidate()
+        pairingTimer = nil
     }
     
     private func generateCode() {
@@ -225,37 +239,6 @@ struct PairingView: View {
                 print("Failed to pair")
             }
         }
-    }
-}
-
-// Custom Modern Button Component
-struct ModernButton: View {
-    let title: String
-    let icon: String
-    let color: Color
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                Text(title)
-            }
-            .font(.system(size: 15, weight: .semibold, design: .rounded))
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                ZStack {
-                    Capsule()
-                        .fill(color.opacity(0.2))
-                    Capsule()
-                        .stroke(color.opacity(0.8), lineWidth: 1)
-                }
-            )
-            .shadow(color: color.opacity(0.3), radius: 5)
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
