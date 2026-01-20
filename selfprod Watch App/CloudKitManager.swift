@@ -69,6 +69,7 @@ protocol CloudKitManagerProtocol: AnyObject {
 }
 
 // MARK: - CloudKit Manager
+@MainActor
 class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
     static let shared = CloudKitManager()
     
@@ -101,6 +102,10 @@ class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
     private var lastPairingRecordID: CKRecord.ID?
     private var accountChangeObserver: NSObjectProtocol?
     private var lastHeartbeatAttempt: Date?
+    
+    // MARK: - Service References
+    private let heartbeatService = HeartbeatService.shared
+    private let pairingService = PairingService.shared
     
     // MARK: - Published Properties
     @Published var currentUserID: String?
@@ -180,8 +185,43 @@ class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
         self.lastReceivedAt = UserDefaults.standard.object(forKey: StorageKeys.lastReceivedAt) as? Date
         
         setupAccountChangeObserver()
+        setupServiceBindings()
         checkAccountStatus()
     }
+    
+    // MARK: - Service Bindings
+    private func setupServiceBindings() {
+        // Sync lastSentAt from HeartbeatService
+        heartbeatService.$lastSentAt.receive(on: DispatchQueue.main).sink { [weak self] date in
+            if date != self?.lastSentAt {
+                self?.lastSentAt = date
+            }
+        }.store(in: &cancellables)
+        
+        // Sync lastReceivedAt from HeartbeatService
+        heartbeatService.$lastReceivedAt.receive(on: DispatchQueue.main).sink { [weak self] date in
+            if date != self?.lastReceivedAt {
+                self?.lastReceivedAt = date
+            }
+        }.store(in: &cancellables)
+        
+        // Sync isSendingHeartbeat
+        heartbeatService.$isSendingHeartbeat.receive(on: DispatchQueue.main).sink { [weak self] sending in
+            self?.isSendingHeartbeat = sending
+        }.store(in: &cancellables)
+        
+        // Sync heartbeatSubscribed
+        heartbeatService.$heartbeatSubscribed.receive(on: DispatchQueue.main).sink { [weak self] subscribed in
+            self?.heartbeatSubscribed = subscribed
+        }.store(in: &cancellables)
+        
+        // Sync pairingSubscribed
+        pairingService.$pairingSubscribed.receive(on: DispatchQueue.main).sink { [weak self] subscribed in
+            self?.pairingSubscribed = subscribed
+        }.store(in: &cancellables)
+    }
+    
+    private var cancellables = Set<AnyCancellable>()
     
     deinit {
         if let observer = accountChangeObserver {
@@ -278,47 +318,23 @@ class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
             return
         }
         
-        // Prevent requests when iCloud is not available
         guard permissionStatus == .available || permissionStatus == .couldNotDetermine else {
             setErrorOnMain(.networkUnavailable)
             completion(nil)
             return
         }
         
-        // Invalidate old sessions first, then generate new code
-        invalidatePreviousSessions { [weak self] in
-            guard let self = self else { return }
-            
-            let code = String(Int.random(in: 100000...999999))
-            let record = CKRecord(recordType: "PairingSession")
-            record["code"] = code
-            record["initiatorID"] = myID
-            record["expiresAt"] = Date().addingTimeInterval(Config.pairingTTL)
-            record["used"] = false
-            
-            self.database.save(record) { [weak self] savedRecord, error in
-                guard let self = self else { return }
-                
-                if error == nil {
-                    #if DEBUG
-                    print("Pairing code generated: \(code)")
-                    #endif
-                    DispatchQueue.main.async {
-                        if let rID = savedRecord?.recordID {
-                            self.lastPairingRecordID = rID
-                            self.subscribeToPairingUpdate(recordID: rID)
-                        }
-                        self.errorMessage = nil
-                    }
-                    completion(code)
+        // Delegate to PairingService
+        pairingService.generateCode(for: myID) { [weak self] code in
+            DispatchQueue.main.async {
+                if let error = self?.pairingService.errorMessage {
+                    self?.errorMessage = error
                 } else {
-                    #if DEBUG
-                    print("Error generating code: \(error?.localizedDescription ?? "")")
-                    #endif
-                    self.setErrorOnMain(.sendFailed(error?.localizedDescription ?? "Bilinmeyen Hata"))
-                    completion(nil)
+                    self?.errorMessage = nil
+                    self?.lastPairingRecordID = self?.pairingService.lastPairingRecordID
                 }
             }
+            completion(code)
         }
     }
     
@@ -361,83 +377,25 @@ class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
     }
     
     func enterPairingCode(_ code: String, completion: @escaping (Bool) -> Void) {
-        // Input validation
-        let sanitizedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard sanitizedCode.count == Config.pairingCodeLength,
-              sanitizedCode.allSatisfy({ $0.isNumber }) else {
-            setErrorOnMain(.invalidCodeFormat)
+        guard let myID = currentUserID else {
             completion(false)
             return
         }
         
-        let predicate = NSPredicate(format: "code == %@", sanitizedCode)
-        let query = CKQuery(recordType: "PairingSession", predicate: predicate)
-        
-        database.fetch(withQuery: query, inZoneWith: nil, desiredKeys: nil, resultsLimit: 1) { [weak self] (result: Result<(matchResults: [(CKRecord.ID, Result<CKRecord, Error>)], queryCursor: CKQueryOperation.Cursor?), Error>) in
-            switch result {
-            case .success(let (results, _)):
-                guard let match = results.first else {
-                    self?.setErrorOnMain(.codeNotFound)
+        // Delegate to PairingService
+        pairingService.enterCode(code, userID: myID) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let initiatorID):
+                    self?.partnerID = initiatorID
+                    self?.isPaired = true
+                    self?.subscribeToHeartbeats()
+                    self?.errorMessage = nil
+                    completion(true)
+                case .failure(let error):
+                    self?.errorMessage = error.errorDescription
                     completion(false)
-                    return
                 }
-                
-                guard let self = self,
-                      let record = try? match.1.get(),
-                      let myID = self.currentUserID else {
-                    completion(false)
-                    return
-                }
-                
-                // Check expiration
-                if let expiresAt = record["expiresAt"] as? Date, expiresAt < Date() {
-                    self.setErrorOnMain(.pairingExpired)
-                    completion(false)
-                    return
-                }
-                
-                // Check if already used
-                if (record["used"] as? Bool) == true || record["receiverID"] != nil {
-                    self.setErrorOnMain(.codeAlreadyUsed)
-                    completion(false)
-                    return
-                }
-                
-                // Update session with receiver ID
-                record["receiverID"] = myID
-                record["used"] = true
-                
-                let modifyOp = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-                modifyOp.savePolicy = .changedKeys
-                modifyOp.modifyRecordsResultBlock = { result in
-                    switch result {
-                    case .success:
-                        if let initiatorID = record["initiatorID"] as? String {
-                            DispatchQueue.main.async {
-                                self.partnerID = initiatorID
-                                self.isPaired = true
-                                self.subscribeToHeartbeats()
-                                completion(true)
-                            }
-                        } else {
-                            completion(false)
-                        }
-                    case .failure(let error):
-                        #if DEBUG
-                        print("Modify failed: \(error.localizedDescription)")
-                        #endif
-                        self.setErrorOnMain(.pairingFailed(error.localizedDescription))
-                        completion(false)
-                    }
-                }
-                self.database.add(modifyOp)
-                
-            case .failure(let error):
-                #if DEBUG
-                print("Fetch failed: \(error.localizedDescription)")
-                #endif
-                self?.setErrorOnMain(.fetchFailed(error.localizedDescription))
-                completion(false)
             }
         }
     }
@@ -511,58 +469,27 @@ class CloudKitManager: ObservableObject, CloudKitManagerProtocol {
     // MARK: - Heartbeat
     
     func sendHeartbeat(completion: @escaping (Bool) -> Void = { _ in }) {
-        // Prevent concurrent sending (Race condition fix)
-        guard !isSendingHeartbeat else {
-            completion(false)
-            return
-        }
-        
-        // Set immediately after guard to prevent race conditions
-        isSendingHeartbeat = true
-        
-        // Debounce: prevent rapid fire
-        if let last = lastHeartbeatAttempt, Date().timeIntervalSince(last) < Config.heartbeatCooldown {
-            isSendingHeartbeat = false
-            completion(false)
-            return
-        }
-        lastHeartbeatAttempt = Date()
-        
         guard let myID = currentUserID, let pID = partnerID else {
-            DispatchQueue.main.async {
-                self.errorMessage = "Eşleşme yok. Önce bağlanın."
-                self.isSendingHeartbeat = false
-            }
-            completion(false)
-            return
-        }
-        
-        // Prevent self-loop
-        if myID == pID {
-            setErrorOnMain(.selfPairing)
-            DispatchQueue.main.async {
-                self.isSendingHeartbeat = false
-            }
+            errorMessage = "Eşleşme yok. Önce bağlanın."
             completion(false)
             return
         }
         
         guard permissionStatus == .available else {
-            DispatchQueue.main.async {
-                self.errorMessage = "iCloud çevrimdışı. Gönderilemedi."
-                self.isSendingHeartbeat = false
-            }
+            errorMessage = "iCloud çevrimdışı. Gönderilemedi."
             completion(false)
             return
         }
         
-        let timestamp = Date()
-        let record = CKRecord(recordType: "Heartbeat")
-        record["fromID"] = myID
-        record["toID"] = pID
-        record["timestamp"] = timestamp
-        
-        sendHeartbeatWithTimeout(record: record, timestamp: timestamp, timeout: Config.heartbeatTimeout, attempt: 1, completion: completion)
+        // Delegate to HeartbeatService
+        heartbeatService.send(from: myID, to: pID) { [weak self] success in
+            if let error = self?.heartbeatService.errorMessage {
+                self?.errorMessage = error
+            } else {
+                self?.errorMessage = nil
+            }
+            completion(success)
+        }
     }
     
     private func sendHeartbeatWithTimeout(record: CKRecord, timestamp: Date, timeout: TimeInterval, attempt: Int, completion: @escaping (Bool) -> Void) {

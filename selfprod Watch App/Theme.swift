@@ -73,6 +73,7 @@ enum ColorPalette: String, CaseIterable, Identifiable {
 }
 
 // MARK: - Theme Manager
+@MainActor
 class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
     
@@ -153,27 +154,45 @@ enum Theme {
 
 // MARK: - Date Extension
 extension Date {
-    var relativeString: String {
+    // MARK: - Static Formatters (Performance Optimization)
+    private static let relativeFullFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        return formatter.localizedString(for: self, relativeTo: Date())
+        return formatter
+    }()
+    
+    private static let relativeShortFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+    
+    private static let relativeAbbreviatedFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+    
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    
+    // MARK: - Computed Properties
+    var relativeString: String {
+        Self.relativeFullFormatter.localizedString(for: self, relativeTo: Date())
     }
     
     var shortRelativeString: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: self, relativeTo: Date())
+        Self.relativeShortFormatter.localizedString(for: self, relativeTo: Date())
     }
     
     var abbreviatedRelativeString: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: self, relativeTo: Date())
+        Self.relativeAbbreviatedFormatter.localizedString(for: self, relativeTo: Date())
     }
     
     var timeString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: self)
+        Self.timeFormatter.string(from: self)
     }
 }

@@ -5,6 +5,7 @@ import WatchKit
 
 /// Robust Presence Manager - Enhanced for reliable location tracking
 /// Features: Retry logic, location validation, periodic refresh, error recovery
+@MainActor
 class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = PresenceManager()
     
@@ -130,6 +131,12 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         #if DEBUG
         print("🗺️ PresenceManager initialized, enabled: \(isEnabled), continuous: \(continuousTrackingEnabled)")
         #endif
+    }
+    
+    deinit {
+        partnerRefreshTimer?.invalidate()
+        partnerRefreshTimer = nil
+        locationManager.stopUpdatingLocation()
     }
     
     // MARK: - Authorization

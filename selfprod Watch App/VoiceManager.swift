@@ -4,6 +4,7 @@ import Combine
 import WatchKit
 
 // MARK: - Voice Manager
+@MainActor
 class VoiceManager: NSObject, ObservableObject {
     static let shared = VoiceManager()
     
@@ -40,6 +41,13 @@ class VoiceManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         setupAudioSession()
+    }
+    
+    deinit {
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        audioRecorder?.stop()
+        audioPlayer?.stop()
     }
     
     // MARK: - Audio Session
