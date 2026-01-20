@@ -46,6 +46,7 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     private enum StorageKeys {
         static let presenceEnabled = "PresenceTrackingEnabled"
+        static let continuousTracking = "ContinuousTrackingEnabled"
         static let lastEncounterTime = "LastEncounterTime"
         static let lastKnownLat = "LastKnownLatitude"
         static let lastKnownLon = "LastKnownLongitude"
@@ -85,6 +86,16 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var locationStatus: LocationStatus = .unknown
     @Published var lastSyncTime: Date?
     
+    /// Continuous tracking mode - faster updates and more frequent sync
+    @Published var continuousTrackingEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(continuousTrackingEnabled, forKey: StorageKeys.continuousTracking)
+            if isEnabled {
+                restartPartnerRefreshTimer()
+            }
+        }
+    }
+    
     // MARK: - Location Status Enum
     enum LocationStatus: String {
         case unknown = "Bilinmiyor"
@@ -105,6 +116,7 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         // Load saved state
         isEnabled = UserDefaults.standard.bool(forKey: StorageKeys.presenceEnabled)
+        continuousTrackingEnabled = UserDefaults.standard.bool(forKey: StorageKeys.continuousTracking)
         lastEncounterTime = UserDefaults.standard.object(forKey: StorageKeys.lastEncounterTime) as? Date
         lastEncounter = lastEncounterTime
         
@@ -116,7 +128,7 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         updateLocationStatus()
         
         #if DEBUG
-        print("🗺️ PresenceManager initialized, enabled: \(isEnabled)")
+        print("🗺️ PresenceManager initialized, enabled: \(isEnabled), continuous: \(continuousTrackingEnabled)")
         #endif
     }
     
@@ -166,14 +178,24 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // MARK: - Periodic Partner Refresh
     private func startPartnerRefreshTimer() {
         stopPartnerRefreshTimer()
-        partnerRefreshTimer = Timer.scheduledTimer(withTimeInterval: Config.partnerRefreshInterval, repeats: true) { [weak self] _ in
+        let interval = continuousTrackingEnabled ? 30.0 : Config.partnerRefreshInterval
+        partnerRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.fetchPartnerLocation()
         }
+        #if DEBUG
+        print("⏱️ Partner refresh timer started with interval: \(interval)s")
+        #endif
     }
     
     private func stopPartnerRefreshTimer() {
         partnerRefreshTimer?.invalidate()
         partnerRefreshTimer = nil
+    }
+    
+    private func restartPartnerRefreshTimer() {
+        if isEnabled {
+            startPartnerRefreshTimer()
+        }
     }
     
     // MARK: - CLLocationManagerDelegate
@@ -330,7 +352,9 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // MARK: - CloudKit Location Sync
     private func shouldUpdateCloudKit() -> Bool {
         guard let lastUpdate = lastLocationUpdate else { return true }
-        return Date().timeIntervalSince(lastUpdate) >= Config.locationUpdateInterval
+        // Continuous mode: update every 1 minute, normal mode: every 3 minutes
+        let interval = continuousTrackingEnabled ? 60.0 : Config.locationUpdateInterval
+        return Date().timeIntervalSince(lastUpdate) >= interval
     }
     
     private func updateLocationInCloudKit(_ location: CLLocation, retryAttempt: Int = 0) {

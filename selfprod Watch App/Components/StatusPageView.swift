@@ -27,6 +27,11 @@ struct StatusPageView: View {
                     .opacity(appearAnimation ? 1 : 0)
                     .offset(y: appearAnimation ? 0 : 15)
                 
+                // Live Tracking Section (NEW)
+                liveTrackingSection
+                    .opacity(appearAnimation ? 1 : 0)
+                    .offset(y: appearAnimation ? 0 : 18)
+                
                 // Proximity Section
                 VStack(alignment: .leading, spacing: 8) {
                     sectionHeader(title: "Yakınlık", icon: "location.fill", color: .cyan)
@@ -146,6 +151,14 @@ struct StatusPageView: View {
                             .stroke(partnerStatusColor.opacity(0.2), lineWidth: 1)
                     )
             )
+        }
+    }
+    
+    // MARK: - Live Tracking Section
+    private var liveTrackingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader(title: "Canlı Takip", icon: "antenna.radiowaves.left.and.right", color: .green)
+            LivePartnerLocationCard()
         }
     }
     
