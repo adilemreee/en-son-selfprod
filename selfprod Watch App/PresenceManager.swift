@@ -128,6 +128,13 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         authorizationStatus = locationManager.authorizationStatus
         updateLocationStatus()
         
+        // Auto-enable if paired and has authorization
+        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            if CloudKitManager.shared.isPaired && !isEnabled {
+                isEnabled = true
+            }
+        }
+        
         #if DEBUG
         print("🗺️ PresenceManager initialized, enabled: \(isEnabled), continuous: \(continuousTrackingEnabled)")
         #endif
@@ -145,6 +152,38 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         print("📍 Requesting location authorization...")
         #endif
         locationManager.requestWhenInUseAuthorization()
+    }
+    
+    // MARK: - Auto-Activate on App Launch
+    /// Called when app becomes active - auto-starts location if paired
+    func activateOnAppLaunch() {
+        guard CloudKitManager.shared.isPaired else {
+            #if DEBUG
+            print("📍 Not paired, skipping location activation")
+            #endif
+            return
+        }
+        
+        // Request authorization if needed
+        if authorizationStatus == .notDetermined {
+            requestAuthorization()
+            return
+        }
+        
+        // Auto-enable and start tracking
+        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            if !isEnabled {
+                #if DEBUG
+                print("📍 Auto-enabling location tracking on app launch")
+                #endif
+                isEnabled = true
+            } else {
+                #if DEBUG
+                print("📍 Force refreshing location on app launch")
+                #endif
+                forceRefresh()
+            }
+        }
     }
     
     // MARK: - Tracking Control
@@ -358,7 +397,12 @@ class PresenceManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     // MARK: - CloudKit Location Sync
     private func shouldUpdateCloudKit() -> Bool {
-        guard let lastUpdate = lastLocationUpdate else { return true }
+        guard let lastUpdate = lastLocationUpdate else {
+            #if DEBUG
+            print("📍 First location update - sending immediately to CloudKit")
+            #endif
+            return true
+        }
         // Continuous mode: update every 1 minute, normal mode: every 3 minutes
         let interval = continuousTrackingEnabled ? 60.0 : Config.locationUpdateInterval
         return Date().timeIntervalSince(lastUpdate) >= interval

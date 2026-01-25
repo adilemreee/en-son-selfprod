@@ -27,10 +27,6 @@ struct StatusPageView: View {
                     .opacity(appearAnimation ? 1 : 0)
                     .offset(y: appearAnimation ? 0 : 15)
                 
-                // Live Tracking Section (NEW)
-                liveTrackingSection
-                    .opacity(appearAnimation ? 1 : 0)
-                    .offset(y: appearAnimation ? 0 : 18)
                 
                 // Proximity Section
                 VStack(alignment: .leading, spacing: 8) {
@@ -138,6 +134,25 @@ struct StatusPageView: View {
                     Text(partnerStatusSubtitle)
                         .font(.system(size: 10, weight: .regular, design: .rounded))
                         .foregroundColor(.white.opacity(0.6))
+                    
+                    if presenceManager.isEnabled {
+                        if presenceManager.isNearPartner {
+                            Text("Buluştunuz! 💑")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(.green)
+                                .padding(.top, 2)
+                        } else if let distance = presenceManager.distanceToPartner {
+                            Text("Mesafe: \(distance.formattedDistance)")
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .foregroundColor(.cyan)
+                                .padding(.top, 2)
+                        } else {
+                            Text("Konum bekleniyor...")
+                                .font(.system(size: 10, weight: .regular, design: .rounded))
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.top, 2)
+                        }
+                    }
                 }
                 
                 Spacer()
@@ -154,13 +169,6 @@ struct StatusPageView: View {
         }
     }
     
-    // MARK: - Live Tracking Section
-    private var liveTrackingSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader(title: "Canlı Takip", icon: "antenna.radiowaves.left.and.right", color: .green)
-            LivePartnerLocationCard()
-        }
-    }
     
     // MARK: - Section Header
     private func sectionHeader(title: String, icon: String, color: Color) -> some View {

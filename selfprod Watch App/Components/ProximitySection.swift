@@ -29,7 +29,15 @@ struct ProximitySection: View {
             
             // Status Row (only if enabled)
             if presenceManager.isEnabled {
-                proximityStatusRow
+                // Distance info (always visible when enabled)
+                if let distance = presenceManager.distanceToPartner {
+                    distanceRow(distance: distance)
+                }
+                
+                // Last sync time
+                if let syncTime = presenceManager.lastSyncTime {
+                    lastSyncRow(syncTime: syncTime)
+                }
                 
                 // Partner location timestamp
                 if let timestamp = presenceManager.partnerLocationTimestamp {
@@ -55,7 +63,7 @@ struct ProximitySection: View {
             Image(systemName: presenceManager.isNearPartner ? "figure.2" : "figure.walk")
                 .foregroundColor(presenceManager.isNearPartner ? .green : .gray)
             VStack(alignment: .leading, spacing: 2) {
-                Text(presenceManager.isNearPartner ? "Yakınınızda! 💕" : "Partner Mesafesi")
+                Text(presenceManager.isNearPartner ? "Buluştunuz! 💑" : "Partner Mesafesi")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundColor(presenceManager.isNearPartner ? .green : .white)
                 if let distance = presenceManager.distanceToPartner {
@@ -74,6 +82,38 @@ struct ProximitySection: View {
         .background(presenceManager.isNearPartner ? Color.green.opacity(0.15) : Theme.subtleWhite)
         .cornerRadius(Theme.cornerRadius)
         .animation(.easeInOut, value: presenceManager.isNearPartner)
+    }
+    
+    private func distanceRow(distance: CLLocationDistance) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: presenceManager.isNearPartner ? "figure.2" : "location.fill")
+                .foregroundColor(presenceManager.isNearPartner ? .green : .cyan)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(presenceManager.isNearPartner ? "Buluştunuz! 💑" : "Mesafe")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(presenceManager.isNearPartner ? .green : .white)
+                Text(distance.formattedDistance)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.cyan)
+            }
+            Spacer()
+        }
+        .padding()
+        .background(presenceManager.isNearPartner ? Color.green.opacity(0.15) : Theme.subtleWhite)
+        .cornerRadius(Theme.cornerRadius)
+        .animation(.easeInOut, value: presenceManager.isNearPartner)
+    }
+    
+    private func lastSyncRow(syncTime: Date) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10))
+                .foregroundColor(.green.opacity(0.7))
+            Text("Son gönderim: \(syncTime.relativeString)")
+                .font(.system(size: 10, weight: .regular, design: .rounded))
+                .foregroundColor(.white.opacity(0.5))
+        }
+        .padding(.horizontal)
     }
     
     private func partnerTimestampRow(timestamp: Date) -> some View {

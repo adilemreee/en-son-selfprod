@@ -4,6 +4,8 @@
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Partnerinizle bulustugunuzda bildirim almak icin konum izni gereklidir.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Arka planda partnerinizle bulusmanizi takip edebilmek icin konum izni gereklidir.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Partnerinize sesli mesaj gondermek icin mikrofon izni gereklidir.</string>
 	<key>UIBackgroundModes</key>

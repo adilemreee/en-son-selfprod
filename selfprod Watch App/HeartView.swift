@@ -20,7 +20,7 @@ struct HeartView: View {
         TabView {
             HeartPageView()
             VoicePageView()
-            MapPageView()
+
             StatusPageView()
             HealthPageView()
             SettingsView()

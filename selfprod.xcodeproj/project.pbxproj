@@ -317,7 +317,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "selfprod Watch App/selfprod Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 46;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GHV7BT96W7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -325,13 +325,16 @@
 				INFOPLIST_FILE = "selfprod-Watch-App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "aşk";
 				INFOPLIST_KEY_CLKComplicationPrincipalClass = selfprod_Watch_App.ComplicationController;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Arka planda partnerinizle bulusmanizi takip edebilmek icin konum izni gereklidir.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Partnerinizle bulustugunuzda bildirim almak icin konum izni gereklidir.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Partnerinize sesli mesaj gondermek icin mikrofon izni gereklidir.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.6;
+				MARKETING_VERSION = 5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = adilemre.selfprod.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -355,7 +358,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "selfprod Watch App/selfprod Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 46;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GHV7BT96W7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -363,13 +366,16 @@
 				INFOPLIST_FILE = "selfprod-Watch-App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "aşk";
 				INFOPLIST_KEY_CLKComplicationPrincipalClass = selfprod_Watch_App.ComplicationController;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Arka planda partnerinizle bulusmanizi takip edebilmek icin konum izni gereklidir.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Partnerinizle bulustugunuzda bildirim almak icin konum izni gereklidir.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Partnerinize sesli mesaj gondermek icin mikrofon izni gereklidir.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.6;
+				MARKETING_VERSION = 5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = adilemre.selfprod.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -390,10 +396,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 46;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GHV7BT96W7;
 				INFOPLIST_KEY_CFBundleDisplayName = "aşk";
-				MARKETING_VERSION = 4.6;
+				MARKETING_VERSION = 5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = adilemre.selfprod;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -407,10 +413,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 46;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GHV7BT96W7;
 				INFOPLIST_KEY_CFBundleDisplayName = "aşk";
-				MARKETING_VERSION = 4.6;
+				MARKETING_VERSION = 5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = adilemre.selfprod;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

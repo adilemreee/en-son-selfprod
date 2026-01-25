@@ -4,7 +4,6 @@ import CloudKit
 // MARK: - Premium Settings View
 struct SettingsView: View {
     @ObservedObject var themeManager = ThemeManager.shared
-    @ObservedObject var presenceManager = PresenceManager.shared
     @ObservedObject var cloudManager = CloudKitManager.shared
     
     @State private var showAbout = false
@@ -23,15 +22,10 @@ struct SettingsView: View {
                     .opacity(appearAnimation ? 1 : 0)
                     .offset(y: appearAnimation ? 0 : 10)
                 
-                // Location Section
-                locationSection
-                    .opacity(appearAnimation ? 1 : 0)
-                    .offset(y: appearAnimation ? 0 : 15)
-                
                 // Account Section
                 accountSection
                     .opacity(appearAnimation ? 1 : 0)
-                    .offset(y: appearAnimation ? 0 : 20)
+                    .offset(y: appearAnimation ? 0 : 15)
                 
                 // App Info
                 appInfoSection
@@ -118,57 +112,6 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Location Section
-    private var locationSection: some View {
-        SettingsSection(
-            title: "Konum",
-            icon: "location.fill",
-            iconColor: .cyan
-        ) {
-            VStack(spacing: 10) {
-                // Toggle
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Yakınlık Algılama")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                        
-                        Text(presenceManager.isEnabled ? "Partner konumunu takip et" : "Konum paylaşımı kapalı")
-                            .font(.system(size: 9, weight: .regular, design: .rounded))
-                            .foregroundColor(.white.opacity(0.5))
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: $presenceManager.isEnabled)
-                        .labelsHidden()
-                        .tint(themeManager.currentPalette.primaryColor)
-                }
-                
-                // Status indicator
-                if presenceManager.isEnabled {
-                    HStack(spacing: 8) {
-                        Image(systemName: authorizationIcon)
-                            .font(.system(size: 10))
-                            .foregroundColor(authorizationColor)
-                        
-                        Text(authorizationText)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(authorizationColor)
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(authorizationColor.opacity(0.1))
-                    )
-                }
-            }
-        }
-    }
-    
     // MARK: - Account Section
     private var accountSection: some View {
         SettingsSection(
@@ -243,43 +186,6 @@ struct SettingsView: View {
     }
     
     // MARK: - Helpers
-    private var authorizationIcon: String {
-        switch presenceManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            return "checkmark.circle.fill"
-        case .denied, .restricted:
-            return "xmark.circle.fill"
-        default:
-            return "questionmark.circle.fill"
-        }
-    }
-    
-    private var authorizationColor: Color {
-        switch presenceManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            return .green
-        case .denied, .restricted:
-            return .red
-        default:
-            return .orange
-        }
-    }
-    
-    private var authorizationText: String {
-        switch presenceManager.authorizationStatus {
-        case .authorizedWhenInUse:
-            return "Kullanırken izin verildi"
-        case .authorizedAlways:
-            return "Her zaman izin verildi"
-        case .denied:
-            return "İzin reddedildi"
-        case .restricted:
-            return "Kısıtlı"
-        default:
-            return "İzin bekleniyor"
-        }
-    }
-    
     private var iCloudStatusText: String {
         switch cloudManager.permissionStatus {
         case .available:

@@ -46,10 +46,8 @@ class ExtensionDelegate: NSObject, WKExtensionDelegate, UNUserNotificationCenter
     func applicationDidBecomeActive() {
         CloudKitManager.shared.checkAccountStatus()
         
-        // Fetch partner location if presence tracking is enabled
-        if PresenceManager.shared.isEnabled {
-            PresenceManager.shared.fetchPartnerLocation()
-        }
+        // Auto-activate location tracking when app opens
+        PresenceManager.shared.activateOnAppLaunch()
     }
     
     func registerForPushNotifications() {
